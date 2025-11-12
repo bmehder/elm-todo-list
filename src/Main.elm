@@ -2,36 +2,38 @@ module Main exposing (main)
 
 import Browser
 import Html exposing (Html, button, div, form, input, label, li, p, span, text, ul)
-import Html.Attributes exposing (checked, class, classList, placeholder, type_, style, value)
+import Html.Attributes exposing (checked, class, classList, placeholder, style, type_, value)
 import Html.Events exposing (onClick, onInput, onSubmit)
+import Http
+import Json.Decode as Decode exposing (Decoder)
 
 
 
 -- DATA
 
 
+type alias TodoId =
+    Int
+
+
 type alias Todo =
-    { id : Id
+    { id : TodoId
     , description : String
     , completed : Bool
     }
 
 
-type alias Id =
-    Int
-
-
-type Filter
+type TodoFilter
     = All
     | Active
     | Completed
 
-    
+
 type alias Model =
     { todos : List Todo
     , draft : String
-    , nextId : Id
-    , filter: Filter
+    , nextId : TodoId
+    , filter : TodoFilter
     }
 
 
@@ -55,12 +57,35 @@ initialModel =
 type Msg
     = InputChanged String
     | FormSubmitted
-    | TodoToggled Id
-    | TodoDeleted Id
-    | FilterChanged Filter
+    | TodoToggled TodoId
+    | TodoDeleted TodoId
+    | FilterChanged TodoFilter
+    | TodosFetched (Result Http.Error (List Todo))
 
 
-toggleTodo : Id -> Model -> Model
+-- UTILITY FUNCTIONS
+
+
+reject : (a -> Bool) -> List a -> List a
+reject predicate =
+    List.filter (not << predicate)
+
+todoDecoder : Decoder Todo
+todoDecoder =
+    Decode.map3 Todo
+        (Decode.field "id" Decode.int)
+        (Decode.field "todo" Decode.string)
+        (Decode.field "completed" Decode.bool)
+
+
+todosDecoder : Decoder (List Todo)
+todosDecoder =
+    Decode.field "todos" (Decode.list todoDecoder)
+
+-- MODEL TRANSFORMATIONS
+
+
+toggleTodo : TodoId -> Model -> Model
 toggleTodo targetId model =
     { model
         | todos =
@@ -76,26 +101,26 @@ toggleTodo targetId model =
     }
 
 
-deleteTodo : Id -> Model -> Model
+deleteTodo : TodoId -> Model -> Model
 deleteTodo targetId model =
     { model
-        | todos = List.filter (\{ id } -> id /= targetId) model.todos
+        | todos = reject ( .id >> (==) targetId ) model.todos
     }
 
 
 addTodo : Model -> Model
 addTodo model =
     let
-        trimmed =
+        trimmedText =
             String.trim model.draft
     in
-    if trimmed == "" then
+    if trimmedText == "" then
         model
 
     else
         { model
             | todos =
-                { id = model.nextId, description = trimmed, completed = False }
+                { id = model.nextId, description = trimmedText, completed = False }
                     :: model.todos
             , draft = ""
             , nextId = model.nextId + 1
@@ -103,32 +128,51 @@ addTodo model =
 
 
 saveDraft : String -> Model -> Model
-saveDraft newTodo model =
-    { model | draft = newTodo }
+saveDraft newTodoText model =
+    { model | draft = newTodoText }
 
 
 
 -- UPDATE
 
 
-update : Msg -> Model -> Model
+update : Msg -> Model -> (Model, Cmd Msg)
 update msg model =
     case msg of
-        InputChanged str ->
-            saveDraft str model
+        InputChanged newTodoText ->
+            (saveDraft newTodoText model, Cmd.none)
 
         FormSubmitted ->
-            addTodo model
+            (addTodo model, Cmd.none)
 
-        TodoToggled id ->
-            toggleTodo id model
+        TodoToggled todoId ->
+            (toggleTodo todoId model, Cmd.none)
 
-        TodoDeleted id ->
-            deleteTodo id model
+        TodoDeleted todoId ->
+            (deleteTodo todoId model, Cmd.none)
 
         FilterChanged newFilter ->
-            { model | filter = newFilter }
+            ({ model | filter = newFilter }, Cmd.none)
 
+        TodosFetched result ->
+          case result of
+              Ok todos ->
+                let
+                    maxId =
+                        todos
+                            |> List.map .id
+                            |> List.maximum
+                            |> Maybe.withDefault 0
+                in
+                ( { model
+                    | todos = todos
+                    , nextId = maxId + 1
+                  }
+                , Cmd.none
+                )
+
+              Err _ ->
+                  ( model, Cmd.none )
 
 
 -- VIEW
@@ -172,9 +216,9 @@ viewForm model =
 
 viewTodo : Todo -> Html Msg
 viewTodo todo =
-    li [ class "flex justify-space-between align-items-center gap-0-5 line-height-3" ]
+    li [ class "flex justify-space-between align-items-center gap-0-5 pb-0-5" ]
         [ div []
-            [ label [ class "flex align-items-center gap-0-5 cursor-pointer" ]
+            [ label [ class "flex align-items-center gap-0-5 cursor-pointer text-align-left" ]
                 [ input
                     [ type_ "checkbox"
                     , checked todo.completed
@@ -191,7 +235,7 @@ viewTodo todo =
         ]
 
 
-viewFilters : Filter -> Html Msg
+viewFilters : TodoFilter -> Html Msg
 viewFilters currentFilter =
     let
         filterButton label filterType =
@@ -212,10 +256,10 @@ viewSummary : Model -> Html Msg
 viewSummary model =
     let
         remaining =
-            List.length (List.filter (not << .completed) model.todos)
+            reject .completed model.todos |> List.length 
 
         total =
-            List.length model.todos
+            model.todos |> List.length 
 
         label =
             String.fromInt remaining
@@ -238,8 +282,15 @@ viewSummary model =
 
 main : Program () Model Msg
 main =
-    Browser.sandbox
-        { init = initialModel
+    Browser.element
+        { init = \_ ->
+            ( initialModel
+            , Http.get
+                { url = "https://dummyjson.com/todos?limit=10"
+                , expect = Http.expectJson TodosFetched todosDecoder
+                }
+            )
         , update = update
         , view = view
+        , subscriptions = \_ -> Sub.none
         }

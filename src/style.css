@@ -83,6 +83,10 @@ button:active {
   align-content: start;
 }
 
+.text-align-left {
+  text-align: left;
+}
+
 .align-items-center {
   align-items: center;
 }
@@ -103,6 +107,10 @@ button:active {
   padding-block-start: 3rem;
 }
 
+.pb-0-5 {
+  padding-block-end: 0.5rem;
+}
+
 .margin-inline-auto {
   margin-inline: auto;
 }
@@ -112,16 +120,12 @@ button:active {
 }
 
 .inner {
-  width: min(100% - 3rem, 24rem);
+  width: min(100% - 3rem, 28rem);
   margin-inline: auto;
 }
 
 .line-through {
   text-decoration: line-through;
-}
-
-.line-height-3 {
-  line-height: 3;
 }
 
 .cursor-pointer {
