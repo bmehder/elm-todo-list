@@ -23,6 +23,12 @@ type alias Todo =
     }
 
 
+type RemoteData a
+    = Loading
+    | Loaded a
+    | Failed String
+
+
 type TodoFilter
     = All
     | Active
@@ -30,7 +36,7 @@ type TodoFilter
 
 
 type alias Model =
-    { todos : List Todo
+    { todos : RemoteData (List Todo)
     , draft : String
     , nextId : TodoId
     , filter : TodoFilter
@@ -39,11 +45,7 @@ type alias Model =
 
 initialModel : Model
 initialModel =
-    { todos =
-        [ { id = 1, description = "Learn Elm", completed = False }
-        , { id = 2, description = "Write a Todo app", completed = False }
-        , { id = 3, description = "Drink coffee", completed = True }
-        ]
+    { todos = Loading
     , draft = ""
     , nextId = 4
     , filter = All
@@ -63,12 +65,14 @@ type Msg
     | TodosFetched (Result Http.Error (List Todo))
 
 
+
 -- UTILITY FUNCTIONS
 
 
 reject : (a -> Bool) -> List a -> List a
 reject predicate =
     List.filter (not << predicate)
+
 
 todoDecoder : Decoder Todo
 todoDecoder =
@@ -82,6 +86,21 @@ todosDecoder : Decoder (List Todo)
 todosDecoder =
     Decode.field "todos" (Decode.list todoDecoder)
 
+
+mapTodos : (List Todo -> List Todo) -> RemoteData (List Todo) -> RemoteData (List Todo)
+mapTodos f state =
+    case state of
+        Loaded todos ->
+            Loaded (f todos)
+
+        Loading ->
+            Loading
+
+        Failed err ->
+            Failed err
+
+
+
 -- MODEL TRANSFORMATIONS
 
 
@@ -89,13 +108,15 @@ toggleTodo : TodoId -> Model -> Model
 toggleTodo targetId model =
     { model
         | todos =
-            List.map
-                (\todo ->
-                    if todo.id == targetId then
-                        { todo | completed = not todo.completed }
+            mapTodos
+                (List.map
+                    (\todo ->
+                        if todo.id == targetId then
+                            { todo | completed = not todo.completed }
 
-                    else
-                        todo
+                        else
+                            todo
+                    )
                 )
                 model.todos
     }
@@ -104,7 +125,10 @@ toggleTodo targetId model =
 deleteTodo : TodoId -> Model -> Model
 deleteTodo targetId model =
     { model
-        | todos = reject ( .id >> (==) targetId ) model.todos
+        | todos =
+            mapTodos
+                (reject (.id >> (==) targetId))
+                model.todos
     }
 
 
@@ -120,8 +144,12 @@ addTodo model =
     else
         { model
             | todos =
-                { id = model.nextId, description = trimmedText, completed = False }
-                    :: model.todos
+                mapTodos
+                    (\todos ->
+                        { id = model.nextId, description = trimmedText, completed = False }
+                            :: todos
+                    )
+                    model.todos
             , draft = ""
             , nextId = model.nextId + 1
         }
@@ -136,43 +164,44 @@ saveDraft newTodoText model =
 -- UPDATE
 
 
-update : Msg -> Model -> (Model, Cmd Msg)
+update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
         InputChanged newTodoText ->
-            (saveDraft newTodoText model, Cmd.none)
+            ( saveDraft newTodoText model, Cmd.none )
 
         FormSubmitted ->
-            (addTodo model, Cmd.none)
+            ( addTodo model, Cmd.none )
 
         TodoToggled todoId ->
-            (toggleTodo todoId model, Cmd.none)
+            ( toggleTodo todoId model, Cmd.none )
 
         TodoDeleted todoId ->
-            (deleteTodo todoId model, Cmd.none)
+            ( deleteTodo todoId model, Cmd.none )
 
         FilterChanged newFilter ->
-            ({ model | filter = newFilter }, Cmd.none)
+            ( { model | filter = newFilter }, Cmd.none )
 
         TodosFetched result ->
-          case result of
-              Ok todos ->
-                let
-                    maxId =
-                        todos
-                            |> List.map .id
-                            |> List.maximum
-                            |> Maybe.withDefault 0
-                in
-                ( { model
-                    | todos = todos
-                    , nextId = maxId + 1
-                  }
-                , Cmd.none
-                )
+            case result of
+                Ok todos ->
+                    let
+                        maxId =
+                            todos
+                                |> List.map .id
+                                |> List.maximum
+                                |> Maybe.withDefault 0
+                    in
+                    ( { model
+                        | todos = Loaded todos -- <-- wrap it
+                        , nextId = maxId + 1
+                      }
+                    , Cmd.none
+                    )
 
-              Err _ ->
-                  ( model, Cmd.none )
+                Err _ ->
+                    ( { model | todos = Failed "Unable to fetch todos." }, Cmd.none )
+
 
 
 -- VIEW
@@ -180,29 +209,49 @@ update msg model =
 
 view : Model -> Html Msg
 view model =
-    let
-        filteredTodos =
-            case model.filter of
-                All ->
-                    model.todos
+    case model.todos of
+        Loading ->
+            div []
+                [ viewForm model
+                , p [] [ text "Loading todos..." ]
+                ]
 
-                Active ->
-                    List.filter (\todo -> not todo.completed) model.todos
+        Failed err ->
+            div []
+                [ viewForm model
+                , p [] [ text ("Error: " ++ err) ]
+                ]
 
-                Completed ->
-                    List.filter .completed model.todos
-    in
-    div []
-        [ viewForm model
-        , ul [ class "p-0" ] (List.map viewTodo filteredTodos)
-        , viewFilters model.filter
-        , p [] [ viewSummary model ]
-        ]
+        Loaded todos ->
+            let
+                filteredTodos =
+                    case model.filter of
+                        All ->
+                            todos
+
+                        Active ->
+                            List.filter (\todo -> not todo.completed) todos
+
+                        Completed ->
+                            List.filter .completed todos
+            in
+            div []
+                [ viewForm model
+                , if List.isEmpty filteredTodos then
+                    p [] [ text "No todos yet! Add your first one above." ]
+
+                  else
+                    div []
+                        [ ul [ class "p-0" ] (List.map viewTodo filteredTodos)
+                        , viewFilters model.filter
+                        ]
+                , p [] [ viewSummary todos ]
+                ]
 
 
 viewForm : Model -> Html Msg
 viewForm model =
-    form [ class "grid gap-0-2-5", style "grid-template-columns" "1fr auto", onSubmit FormSubmitted ]
+    form [ onSubmit FormSubmitted, class "grid gap-0-2-5", style "grid-template-columns" "1fr auto" ]
         [ input
             [ type_ "text"
             , placeholder "What needs doing?"
@@ -252,14 +301,14 @@ viewFilters currentFilter =
         ]
 
 
-viewSummary : Model -> Html Msg
-viewSummary model =
+viewSummary : List Todo -> Html Msg
+viewSummary todos =
     let
         remaining =
-            reject .completed model.todos |> List.length 
+            todos |> reject .completed |> List.length
 
         total =
-            model.todos |> List.length 
+            List.length todos
 
         label =
             String.fromInt remaining
@@ -283,13 +332,14 @@ viewSummary model =
 main : Program () Model Msg
 main =
     Browser.element
-        { init = \_ ->
-            ( initialModel
-            , Http.get
-                { url = "https://dummyjson.com/todos?limit=10"
-                , expect = Http.expectJson TodosFetched todosDecoder
-                }
-            )
+        { init =
+            \_ ->
+                ( initialModel
+                , Http.get
+                    { url = "https://dummyjson.com/todos?limit=10"
+                    , expect = Http.expectJson TodosFetched todosDecoder
+                    }
+                )
         , update = update
         , view = view
         , subscriptions = \_ -> Sub.none
