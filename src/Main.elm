@@ -47,7 +47,7 @@ initialModel : Model
 initialModel =
     { todos = Loading
     , draft = ""
-    , nextId = 4
+    , nextId = 0
     , filter = All
     }
 
@@ -88,16 +88,13 @@ todosDecoder =
 
 
 mapTodos : (List Todo -> List Todo) -> RemoteData (List Todo) -> RemoteData (List Todo)
-mapTodos f state =
-    case state of
+mapTodos fn remoteData =
+    case remoteData of
         Loaded todos ->
-            Loaded (f todos)
+            Loaded (fn todos)
 
-        Loading ->
-            Loading
-
-        Failed err ->
-            Failed err
+        _ ->
+            remoteData
 
 
 
@@ -230,7 +227,7 @@ view model =
                             todos
 
                         Active ->
-                            List.filter (\todo -> not todo.completed) todos
+                            reject .completed todos
 
                         Completed ->
                             List.filter .completed todos
@@ -267,7 +264,7 @@ viewTodo : Todo -> Html Msg
 viewTodo todo =
     li [ class "flex justify-space-between align-items-center gap-0-5 pb-0-5" ]
         [ div []
-            [ label [ class "flex align-items-center gap-0-5 cursor-pointer text-align-left" ]
+            [ label [ class "flex align-items-center gap-0-5 text-align-left cursor-pointer" ]
                 [ input
                     [ type_ "checkbox"
                     , checked todo.completed
@@ -308,7 +305,7 @@ viewSummary todos =
             todos |> reject .completed |> List.length
 
         total =
-            List.length todos
+            todos |> List.length
 
         label =
             String.fromInt remaining
