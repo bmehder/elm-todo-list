@@ -87,14 +87,17 @@ todosDecoder =
     Decode.field "todos" (Decode.list todoDecoder)
 
 
-mapTodos : (List Todo -> List Todo) -> RemoteData (List Todo) -> RemoteData (List Todo)
-mapTodos fn remoteData =
+mapRemoteData : (a -> b) -> RemoteData a -> RemoteData b
+mapRemoteData fn remoteData =
     case remoteData of
-        Loaded todos ->
-            Loaded (fn todos)
+        Loaded data ->
+            Loaded (fn data)
 
-        _ ->
-            remoteData
+        Loading ->
+            Loading
+
+        Failed err ->
+            Failed err
 
 
 
@@ -105,7 +108,7 @@ toggleTodo : TodoId -> Model -> Model
 toggleTodo targetId model =
     { model
         | todos =
-            mapTodos
+            mapRemoteData
                 (List.map
                     (\todo ->
                         if todo.id == targetId then
@@ -123,7 +126,7 @@ deleteTodo : TodoId -> Model -> Model
 deleteTodo targetId model =
     { model
         | todos =
-            mapTodos
+            mapRemoteData
                 (reject (.id >> (==) targetId))
                 model.todos
     }
@@ -141,7 +144,7 @@ addTodo model =
     else
         { model
             | todos =
-                mapTodos
+                mapRemoteData
                     (\todos ->
                         { id = model.nextId, description = trimmedText, completed = False }
                             :: todos
